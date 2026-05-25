@@ -1,35 +1,57 @@
 //! Фоновый scheduler для напоминаний о платежах по рассрочке.
 //!
 //! Telegram Bot API не умеет планировать сообщения, поэтому держим свой цикл:
-//! каждые 60 секунд проходим по активным долгам с рассрочкой и шлём
-//! напоминания:
+//! каждый день в 09:00 по локальному времени (UTC+5, Asia/Tashkent) проходим
+//! по активным долгам с рассрочкой и шлём напоминания:
 //!  • в день срока (если ещё не слали),
-//!  • через сутки после срока — «просрочено».
+//!  • на следующий день после срока — «просрочено».
 //!
 //! Учёт `due_notified_at` / `overdue_notified_at` не даёт спамить.
+//! При старте вычисляем ближайшие 09:00 и спим до них; потом — каждые 24 ч.
 
 use crate::error::Result;
 use crate::models::{DebtStatus, Money};
-use crate::services::clock::fmt_date_local;
+use crate::services::clock::{fmt_date_local, local_at, today_local};
 use crate::services::Notifier;
 use crate::storage::Storage;
 use chrono::{DateTime, Duration, Utc};
 use std::sync::Arc;
 use tracing::{debug, error, info};
 
-const TICK: std::time::Duration = std::time::Duration::from_secs(60);
+/// Час дня (локальное время) в который запускаем проверку.
+const RUN_HOUR: u32 = 9;
 
 pub fn spawn<S: Storage>(storage: Arc<S>, notifier: Arc<Notifier<S>>) {
     tokio::spawn(async move {
-        info!("scheduler started, tick = {:?}", TICK);
-        let mut interval = tokio::time::interval(TICK);
+        info!("scheduler started, daily run at {:02}:00 local time", RUN_HOUR);
         loop {
-            interval.tick().await;
+            let wait = secs_until_next_run();
+            info!("next scheduler run in {:.1} h", wait.as_secs_f64() / 3600.0);
+            tokio::time::sleep(wait).await;
+
+            info!("scheduler daily tick");
             if let Err(e) = tick(&*storage, &*notifier).await {
                 error!("scheduler tick error: {e:?}");
             }
         }
     });
+}
+
+/// Сколько секунд до следующего RUN_HOUR:00 по локальному времени.
+fn secs_until_next_run() -> std::time::Duration {
+    let now = Utc::now();
+    let today = today_local();
+    let today_run = local_at(today, RUN_HOUR, 0);
+
+    let next_run = if now < today_run {
+        today_run
+    } else {
+        local_at(today + Duration::days(1), RUN_HOUR, 0)
+    };
+
+    (next_run - now)
+        .to_std()
+        .unwrap_or(std::time::Duration::from_secs(60))
 }
 
 async fn tick<S: Storage>(storage: &S, notifier: &Notifier<S>) -> Result<()> {

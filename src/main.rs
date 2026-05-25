@@ -3,7 +3,7 @@ use loan_wallet::{
     error::Result,
     handlers::Dispatcher,
     services::{scheduler, Notifier},
-    storage::FileStorage,
+    storage::MongoStorage,
     telegram::{api::BotApi, polling},
 };
 use std::sync::Arc;
@@ -19,12 +19,10 @@ async fn main() -> Result<()> {
         .init();
 
     let cfg = Config::from_env()?;
-    info!("data dir: {}", cfg.data_dir.display());
 
-    let storage = Arc::new(FileStorage::open(&cfg.data_dir).await?);
+    let storage = Arc::new(MongoStorage::open(&cfg.mongodb_uri, &cfg.mongodb_db).await?);
     let api = BotApi::new(cfg.bot_token.clone());
 
-    // Узнаём username бота (для deep-link приглашений).
     let me = api.get_me().await?;
     let bot_username = me.username.clone().unwrap_or_default();
     info!("бот: @{} ({})", bot_username, me.first_name);
@@ -32,11 +30,8 @@ async fn main() -> Result<()> {
     let notifier = Arc::new(Notifier::new(api.clone(), storage.clone()));
     let dispatcher = Arc::new(Dispatcher::new(storage.clone(), notifier.clone(), bot_username));
 
-    // Фоновый scheduler напоминаний о платежах. Tokio cancel'нёт его при выходе из main.
     scheduler::spawn(storage.clone(), notifier.clone());
 
-    // Polling. Если позже нужен webhook — собрать axum-app из
-    // loan_wallet::telegram::webhook::router(...) и крутить параллельно tokio::join!.
     polling::run(api, dispatcher).await?;
     Ok(())
 }

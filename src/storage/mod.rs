@@ -2,10 +2,9 @@ use crate::error::Result;
 use crate::models::*;
 use async_trait::async_trait;
 
-pub mod file;
 pub mod mongo;
 
-pub use file::FileStorage;
+pub use mongo::MongoStorage;
 
 /// Высокоуровневый трейт хранилища. Файловая и Mongo-реализации должны быть
 /// взаимозаменяемы. Все методы async, чтобы переход на Mongo был бесшовным.
