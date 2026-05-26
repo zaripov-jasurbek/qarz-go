@@ -1,7 +1,7 @@
 //! Управление контактами + блокировки.
 
 use crate::error::Result;
-use crate::handlers::common::{back_to_menu_button, send_main_menu};
+use crate::handlers::common::back_to_menu_button;
 use crate::models::{normalize_phone, Block, Contact, Invite, InvitePurpose, Session, SessionState, User};
 use crate::storage::Storage;
 use crate::telegram::api::BotApi;
@@ -200,18 +200,35 @@ async fn save_contact<S: Storage>(
     storage.add_contact(&c).await?;
     storage.clear_session(user.telegram_id).await?;
 
-    let status = if c.linked_user_id.is_some() {
-        "✅ Этот человек уже в боте — можно сразу добавлять в комнаты."
-    } else {
-        "⏳ Этот человек ещё не в боте. Откройте карточку контакта, чтобы получить ссылку-приглашение."
-    };
+    // Сначала убираем reply-клавиатуру отдельным сообщением.
     let remove_kb = ReplyMarkup::Remove(ReplyKeyboardRemove { remove_keyboard: true });
+    api.send_message(chat_id, "👍", Some(&remove_kb)).await?;
+
+    // Затем показываем результат с инлайн-кнопками.
+    let (status, btn_row): (&str, Vec<InlineKeyboardButton>) = if c.linked_user_id.is_some() {
+        (
+            "✅ Уже в боте — можно добавлять в комнаты.",
+            vec![InlineKeyboardButton::callback("Открыть карточку", format!("contact:open:{}", c.id))],
+        )
+    } else {
+        (
+            "⏳ Ещё не в боте.\nНажмите кнопку ниже — там будет ссылка-приглашение для друга.",
+            vec![InlineKeyboardButton::callback("📨 Получить ссылку-приглашение", format!("contact:open:{}", c.id))],
+        )
+    };
+
+    let kb = InlineKeyboardMarkup {
+        inline_keyboard: vec![
+            btn_row,
+            vec![back_to_menu_button()],
+        ],
+    };
     api.send_message(
         chat_id,
         &format!("Контакт <b>{display_name}</b> сохранён.\n\n{status}"),
-        Some(&remove_kb),
+        Some(&ReplyMarkup::InlineKeyboard(kb)),
     ).await?;
-    send_main_menu(api, storage, chat_id).await
+    Ok(())
 }
 
 /// Юзер переслал контакт из Telegram → сохраняем.
