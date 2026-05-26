@@ -40,4 +40,7 @@ pub enum SessionState {
 
     // Погашение
     AwaitingPaymentAmount { debt_id: String },
+
+    // Управление участниками комнаты (храним room_id, чтобы не класть два UUID в callback)
+    ManagingRoom { room_id: String },
 }

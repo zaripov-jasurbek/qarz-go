@@ -122,6 +122,9 @@ impl<S: Storage> Dispatcher<S> {
             SessionState::AwaitingPaymentAmount { debt_id } => {
                 debts::receive_payment(api, &*self.storage, &*self.notifier, &msg, &user, &debt_id, &text).await?;
             }
+            SessionState::ManagingRoom { .. } => {
+                send_main_menu(api, &*self.storage, chat_id).await?;
+            }
         }
         Ok(())
     }
@@ -212,9 +215,12 @@ impl<S: Storage> Dispatcher<S> {
             ["room", "members", id] => {
                 rooms::show_members(api, &*self.storage, chat_id, &user, id).await?;
             }
-            ["room", "add_mem", room_id, contact_id] => {
-                rooms::add_member(api, &*self.storage, &*self.notifier, chat_id, &user, room_id, contact_id).await?;
-                ack_text = Some("Добавлено".into());
+            ["room", "addm", contact_id] => {
+                let session = self.storage.get_session(user.telegram_id).await?;
+                if let Some(SessionState::ManagingRoom { room_id }) = session.map(|s| s.state) {
+                    rooms::add_member(api, &*self.storage, &*self.notifier, chat_id, &user, &room_id, contact_id).await?;
+                    ack_text = Some("Добавлено".into());
+                }
             }
             ["room", "settle", id] => {
                 rooms::settle(api, &*self.storage, &*self.notifier, chat_id, &user, id).await?;

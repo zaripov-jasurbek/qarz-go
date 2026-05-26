@@ -5,6 +5,7 @@ use crate::handlers::common::{back_to_menu_button, currency_keyboard, parse_curr
 use crate::models::{
     Debt, DebtSource, Money, Room, RoomItem, RoomStatus, Session, SessionState, User,
 };
+
 use crate::services::{split_item, Notifier};
 use crate::storage::Storage;
 use crate::telegram::api::BotApi;
@@ -256,6 +257,11 @@ pub async fn show_members<S: Storage>(
 ) -> Result<()> {
     let Some(room) = storage.get_room(room_id).await? else { return Ok(()); };
     if room.creator_user_id != user.id { return Ok(()); }
+    // Сохраняем room_id в сессию — add_member кнопки будут передавать только contact_id.
+    storage.set_session(&Session::new(
+        user.telegram_id,
+        SessionState::ManagingRoom { room_id: room_id.to_string() },
+    )).await?;
 
     // Список контактов с возможностью добавить в комнату
     let contacts = storage.list_contacts(&user.id).await?;
@@ -288,7 +294,7 @@ pub async fn show_members<S: Storage>(
         }
         rows.push(vec![InlineKeyboardButton::callback(
             format!("➕ {}", c.display_name),
-            format!("room:add_mem:{}:{}", room.id, c.id),
+            format!("room:addm:{}", c.id),  // room_id хранится в сессии
         )]);
         any_addable = true;
     }
