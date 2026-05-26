@@ -6,8 +6,8 @@ use crate::models::{normalize_phone, Block, Contact, Invite, InvitePurpose, Sess
 use crate::storage::Storage;
 use crate::telegram::api::BotApi;
 use crate::telegram::types::{
-    InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, Message, ReplyKeyboardMarkup,
-    ReplyKeyboardRemove, ReplyMarkup, TgContact,
+    InlineKeyboardButton, InlineKeyboardMarkup, Message, ReplyKeyboardRemove, ReplyMarkup,
+    TgContact,
 };
 
 /// Показать список контактов в инлайн-меню.
@@ -132,7 +132,7 @@ pub async fn start_add<S: Storage>(api: &BotApi, storage: &S, msg_chat_id: i64, 
     Ok(())
 }
 
-/// Юзер прислал имя для контакта → просим поделиться.
+/// Юзер прислал имя для контакта → просим номер телефона.
 pub async fn receive_name<S: Storage>(
     api: &BotApi,
     storage: &S,
@@ -150,20 +150,71 @@ pub async fn receive_name<S: Storage>(
         SessionState::AwaitingContactShare { display_name: name.to_string() },
     )).await?;
 
-    let kb = ReplyMarkup::ReplyKeyboard(ReplyKeyboardMarkup {
-        keyboard: vec![vec![KeyboardButton::request_contact("📞 Поделиться контактом друга")]],
-        resize_keyboard: Some(true),
-        one_time_keyboard: Some(true),
-    });
     api.send_message(
         msg.chat.id,
-        &format!("Окей, контакт назвал <b>{name}</b>.\nТеперь поделитесь его телефоном (кнопка ниже)."),
-        Some(&kb),
+        &format!(
+            "Окей, контакт называется <b>{name}</b>.\n\n\
+             Введите номер телефона друга:\n\
+             <code>+998901234567</code>\n\n\
+             Или перешлите его контакт из Telegram."
+        ),
+        None,
     ).await?;
     Ok(())
 }
 
-/// Юзер поделился контактом друга → сохраняем.
+/// Юзер ввёл номер телефона друга вручную.
+pub async fn receive_phone_number<S: Storage>(
+    api: &BotApi,
+    storage: &S,
+    msg: &Message,
+    user: &User,
+    display_name: &str,
+    phone_text: &str,
+) -> Result<()> {
+    let phone = normalize_phone(phone_text);
+    if phone.len() < 7 {
+        api.send_message(
+            msg.chat.id,
+            "Не понял номер. Введите в формате <code>+998901234567</code>.",
+            None,
+        ).await?;
+        return Ok(());
+    }
+    save_contact(api, storage, msg.chat.id, user, display_name, &phone).await
+}
+
+/// Общая логика сохранения нового контакта.
+async fn save_contact<S: Storage>(
+    api: &BotApi,
+    storage: &S,
+    chat_id: i64,
+    user: &User,
+    display_name: &str,
+    phone: &str,
+) -> Result<()> {
+    let mut c = Contact::new(user.id.clone(), display_name.to_string(), phone.to_string());
+    if let Some(linked) = storage.find_users_by_phone(phone).await?.into_iter().next() {
+        c.linked_user_id = Some(linked.id);
+    }
+    storage.add_contact(&c).await?;
+    storage.clear_session(user.telegram_id).await?;
+
+    let status = if c.linked_user_id.is_some() {
+        "✅ Этот человек уже в боте — можно сразу добавлять в комнаты."
+    } else {
+        "⏳ Этот человек ещё не в боте. Откройте карточку контакта, чтобы получить ссылку-приглашение."
+    };
+    let remove_kb = ReplyMarkup::Remove(ReplyKeyboardRemove { remove_keyboard: true });
+    api.send_message(
+        chat_id,
+        &format!("Контакт <b>{display_name}</b> сохранён.\n\n{status}"),
+        Some(&remove_kb),
+    ).await?;
+    send_main_menu(api, storage, chat_id).await
+}
+
+/// Юзер переслал контакт из Telegram → сохраняем.
 pub async fn receive_shared_contact<S: Storage>(
     api: &BotApi,
     storage: &S,
@@ -177,28 +228,7 @@ pub async fn receive_shared_contact<S: Storage>(
         api.send_message(msg.chat.id, "Не удалось прочитать номер.", None).await?;
         return Ok(());
     }
-    let mut c = Contact::new(user.id.clone(), display_name.to_string(), phone.clone());
-
-    // Если этот phone уже привязан к существующему юзеру — сразу линкуем.
-    if let Some(linked) = storage.find_users_by_phone(&phone).await?.into_iter().next() {
-        c.linked_user_id = Some(linked.id);
-    }
-    storage.add_contact(&c).await?;
-    storage.clear_session(user.telegram_id).await?;
-
-    let remove_kb = ReplyMarkup::Remove(ReplyKeyboardRemove { remove_keyboard: true });
-    let status = if c.linked_user_id.is_some() {
-        "✅ Этот человек уже в боте — можно сразу добавлять в комнаты."
-    } else {
-        "⏳ Этот человек ещё не в боте. Откройте карточку контакта, чтобы получить ссылку-приглашение."
-    };
-    api.send_message(
-        msg.chat.id,
-        &format!("Контакт <b>{display_name}</b> сохранён.\n\n{status}"),
-        Some(&remove_kb),
-    ).await?;
-    send_main_menu(api, storage, msg.chat.id).await?;
-    Ok(())
+    save_contact(api, storage, msg.chat.id, user, display_name, &phone).await
 }
 
 pub async fn block<S: Storage>(

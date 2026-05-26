@@ -84,8 +84,8 @@ impl<S: Storage> Dispatcher<S> {
             SessionState::AwaitingContactName => {
                 contacts::receive_name(api, &*self.storage, &msg, &user, &text).await?;
             }
-            SessionState::AwaitingContactShare { .. } => {
-                api.send_message(chat_id, "Нажмите кнопку «📞 Поделиться контактом» внизу.", None).await?;
+            SessionState::AwaitingContactShare { display_name } => {
+                contacts::receive_phone_number(api, &*self.storage, &msg, &user, &display_name, &text).await?;
             }
             SessionState::AwaitingRoomName => {
                 rooms::receive_room_name(api, &*self.storage, &msg, &user, &text).await?;
