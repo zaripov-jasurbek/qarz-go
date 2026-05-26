@@ -2,7 +2,7 @@
 
 use crate::error::Result;
 use crate::handlers::common::{main_menu_markup, send_main_menu};
-use crate::models::{normalize_phone, InvitePurpose, User};
+use crate::models::{normalize_phone, Contact, InvitePurpose, User};
 use crate::storage::Storage;
 use crate::telegram::api::BotApi;
 use crate::telegram::types::{
@@ -87,12 +87,29 @@ pub async fn handle_shared_contact<S: Storage>(
     u.phone = Some(phone.clone());
     storage.upsert_user(&u).await?;
 
-    // Линкуем все контакты в чужих книгах с этим телефоном.
+    // Линкуем все контакты в чужих книгах с этим телефоном,
+    // и создаём обратный контакт у каждого владельца (чтобы и они были видны нам).
     let mut linked = 0usize;
     for c in storage.find_contacts_by_phone(&phone).await? {
         if c.linked_user_id.is_none() {
             storage.link_contact(&c.id, &u.id).await?;
             linked += 1;
+        }
+        // Создаём обратный контакт: владелец книги → у нас в контактах.
+        if let Some(owner) = storage.get_user(&c.owner_user_id).await? {
+            if let Some(owner_phone) = owner.phone.clone() {
+                let already = storage.find_contacts_by_phone(&owner_phone).await?
+                    .into_iter().any(|cx| cx.owner_user_id == u.id);
+                if !already {
+                    let mut rev = Contact::new(
+                        u.id.clone(),
+                        owner.display_name(),
+                        owner_phone,
+                    );
+                    rev.linked_user_id = Some(owner.id.clone());
+                    storage.add_contact(&rev).await?;
+                }
+            }
         }
     }
 
@@ -124,9 +141,27 @@ async fn consume_invite<S: Storage>(storage: &S, user: &User, token: &str) -> Re
     }
     match &invite.purpose {
         InvitePurpose::AddContact { contact_id } => {
-            // Линкуем контакт-источник на этого юзера.
+            // 1. Линкуем контакт отправителя → теперь он видит друга как ✅
             storage.link_contact(contact_id, &user.id).await?;
             storage.mark_invite_used(token, &user.id).await?;
+
+            // 2. Создаём обратный контакт: друг теперь тоже видит отправителя.
+            if let Some(inviter) = storage.get_user(&invite.created_by_user_id).await? {
+                if let Some(phone) = inviter.phone.clone() {
+                    // Проверяем, нет ли уже такого контакта у друга.
+                    let already = storage.find_contacts_by_phone(&phone).await?
+                        .into_iter().any(|c| c.owner_user_id == user.id);
+                    if !already {
+                        let mut rev = Contact::new(
+                            user.id.clone(),
+                            inviter.display_name(),
+                            phone,
+                        );
+                        rev.linked_user_id = Some(inviter.id.clone());
+                        storage.add_contact(&rev).await?;
+                    }
+                }
+            }
         }
     }
     Ok(())
