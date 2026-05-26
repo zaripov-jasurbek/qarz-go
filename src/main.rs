@@ -4,7 +4,7 @@ use loan_wallet::{
     handlers::Dispatcher,
     services::{scheduler, Notifier},
     storage::MongoStorage,
-    telegram::{api::BotApi, polling},
+    telegram::{api::BotApi, webhook},
 };
 use std::sync::Arc;
 use tracing::info;
@@ -32,6 +32,16 @@ async fn main() -> Result<()> {
 
     scheduler::spawn(storage.clone(), notifier.clone());
 
-    polling::run(api, dispatcher).await?;
+    // Регистрируем webhook в Telegram
+    let webhook_endpoint = format!("{}/webhook", cfg.webhook_url.trim_end_matches('/'));
+    api.set_webhook(&webhook_endpoint, cfg.webhook_secret.as_deref()).await?;
+    info!("webhook set → {webhook_endpoint}");
+
+    // Запускаем axum-сервер
+    let app = webhook::router(api, dispatcher, cfg.webhook_secret);
+    let listener = tokio::net::TcpListener::bind(&cfg.bind_addr).await?;
+    info!("listening on {}", cfg.bind_addr);
+    axum::serve(listener, app).await?;
+
     Ok(())
 }

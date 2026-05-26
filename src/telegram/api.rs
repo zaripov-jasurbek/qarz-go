@@ -67,19 +67,6 @@ impl BotApi {
         self.call("getMe", &json!({})).await
     }
 
-    /// Long polling. `offset` — следующий update_id, который мы ждём.
-    pub async fn get_updates(&self, offset: i64, timeout_secs: u32) -> Result<Vec<Update>> {
-        self.call(
-            "getUpdates",
-            &json!({
-                "offset": offset,
-                "timeout": timeout_secs,
-                "allowed_updates": ["message", "callback_query"],
-            }),
-        )
-        .await
-    }
-
     pub async fn send_message(
         &self,
         chat_id: i64,
@@ -128,11 +115,6 @@ impl BotApi {
             body.insert("text".into(), json!(t));
         }
         let _: bool = self.call("answerCallbackQuery", &Value::Object(body)).await?;
-        Ok(())
-    }
-
-    pub async fn delete_webhook(&self) -> Result<()> {
-        let _: bool = self.call("deleteWebhook", &json!({ "drop_pending_updates": false })).await?;
         Ok(())
     }
 
