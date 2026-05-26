@@ -1,6 +1,7 @@
 //! Управление контактами + блокировки.
 
 use crate::error::Result;
+use urlencoding;
 use crate::handlers::common::back_to_menu_button;
 use crate::models::{normalize_phone, Block, Contact, Invite, InvitePurpose, Session, SessionState, User};
 use crate::storage::Storage;
@@ -88,12 +89,18 @@ pub async fn show_card<S: Storage>(
             }
         }
         None => {
-            text.push_str("Статус: ⏳ ещё не в боте\n\nОтправьте ему ссылку-приглашение:");
+            text.push_str("Статус: ⏳ ещё не в боте\n\nСкопируйте и отправьте другу эту ссылку:");
             // Создаём (или находим) инвайт для этого контакта.
             let token = ensure_invite(storage, user, &c.id).await?;
-            let link = format!("https://t.me/{}?start={}", bot_username, token);
-            text.push_str(&format!("\n<code>{}</code>", link));
-            rows.push(vec![InlineKeyboardButton::link("📤 Поделиться приглашением", &link)]);
+            let invite_link = format!("https://t.me/{}?start={}", bot_username, token);
+            text.push_str(&format!("\n<code>{}</code>", invite_link));
+            // share-кнопка — открывает диалог «отправить в чат» в Telegram
+            let share_url = format!(
+                "https://t.me/share/url?url={}&text={}",
+                urlencoding::encode(&invite_link),
+                urlencoding::encode("Привет! Добавь меня в боте для учёта долгов 👇"),
+            );
+            rows.push(vec![InlineKeyboardButton::link("📤 Поделиться ссылкой", &share_url)]);
         }
     }
     rows.push(vec![InlineKeyboardButton::callback(
